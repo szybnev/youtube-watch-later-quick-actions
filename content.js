@@ -4,8 +4,6 @@
   const VIDEO_SELECTOR = "ytd-playlist-video-renderer";
   const ACTIONS_CLASS = "wlqa-actions";
   const HIDE_MENU_CLASS = "wlqa-hide-menu";
-  const REMOVE_TEXT_RE =
-    /(remove|delete).*(watch\s+later|playlist)|(watch\s+later|playlist).*(remove|delete)|удалить.*(смотреть\s+позже|плейлист|плейлиста)|(смотреть\s+позже|плейлист|плейлиста).*удалить/i;
   const COPY_ICON =
     "M3.9 12a5 5 0 0 1 5-5h4v2h-4a3 3 0 0 0 0 6h4v2h-4a5 5 0 0 1-5-5Zm5.1 1h6v-2h-6v2Zm2-6h4a5 5 0 0 1 0 10h-4v-2h4a3 3 0 0 0 0-6h-4V7Z";
   const REMOVE_ICON =
@@ -13,6 +11,7 @@
 
   let route = "";
   let refreshQueued = false;
+  let removing = false;
 
   function isWatchLater() {
     return location.pathname === "/playlist" && new URLSearchParams(location.search).get("list") === "WL";
@@ -57,49 +56,25 @@
     );
   }
 
-  function removeItem() {
-    return menuItems().find((candidate) =>
-      REMOVE_TEXT_RE.test(`${candidate.textContent || ""} ${candidate.getAttribute("aria-label") || ""}`)
-    );
+  function removeItem(row) {
+    const setVideoId = row.data && row.data.setVideoId;
+    return menuItems().find((item) => {
+      if (!item.getClientRects().length) return false;
+      const endpoint = item.data && item.data.serviceEndpoint && item.data.serviceEndpoint.playlistEditEndpoint;
+      return setVideoId && endpoint && endpoint.playlistId === "WL" &&
+        Array.isArray(endpoint.actions) && endpoint.actions.some((action) =>
+          action.action === "ACTION_REMOVE_VIDEO" && action.setVideoId === setVideoId
+        );
+    });
   }
 
-  function setVideoIdFor(row) {
-    return (row.data && row.data.setVideoId) || "";
-  }
-
-  function endpointMatchesRow(endpoint, row) {
-    const setVideoId = setVideoIdFor(row);
-    const actions = endpoint && endpoint.playlistEditEndpoint && endpoint.playlistEditEndpoint.actions;
-    if (!setVideoId || !Array.isArray(actions)) return true;
-    return actions.some((action) => action.setVideoId === setVideoId);
-  }
-
-  function removeEndpointFromRow(row) {
-    const items = (row.data && row.data.menu && row.data.menu.items) || [];
-    for (const item of items) {
-      const renderer = item.menuServiceItemRenderer;
-      const text = renderer && renderer.text && renderer.text.runs
-        ? renderer.text.runs.map((run) => run.text || "").join("")
-        : "";
-      const endpoint = renderer && renderer.serviceEndpoint;
-      if (endpoint && REMOVE_TEXT_RE.test(text) && endpointMatchesRow(endpoint, row)) return endpoint;
-    }
-    return null;
-  }
-
-  function removeEndpointFromMenu(row) {
-    const item = removeItem();
-    const endpoint = item && item.data && item.data.serviceEndpoint;
-    return endpoint && endpointMatchesRow(endpoint, row) ? endpoint : null;
-  }
-
-  function waitForRemoveEndpoint(row, deadline, done) {
-    const endpoint = removeEndpointFromMenu(row);
-    if (endpoint || performance.now() >= deadline) {
-      done(endpoint);
+  function waitForRemoveItem(row, deadline, done) {
+    const item = removeItem(row);
+    if (item || performance.now() >= deadline) {
+      done(item);
       return;
     }
-    setTimeout(() => waitForRemoveEndpoint(row, deadline, done), 100);
+    setTimeout(() => waitForRemoveItem(row, deadline, done), 100);
   }
 
   function waitUntilGone(row, deadline, done) {
@@ -152,53 +127,37 @@
   }
 
   async function removeViaYouTube(row, button) {
+    if (removing) return;
     const menuButton = menuButtonFor(row);
-    const app = document.querySelector("ytd-app");
     if (!menuButton) {
       mark(button, "Нет меню", "error");
       return;
     }
-    if (!app || typeof app.resolveCommand !== "function") {
-      mark(button, "Нет API", "error");
-      return;
-    }
 
+    removing = true;
     document.documentElement.classList.add(HIDE_MENU_CLASS);
     button.disabled = true;
-
-    const run = async (endpoint) => {
-      if (!endpoint) {
+    try {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      menuButton.click();
+      const item = await new Promise((done) => waitForRemoveItem(row, performance.now() + 1500, done));
+      if (!item) {
         mark(button, "Не найдено", "error");
-        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-        setTimeout(() => document.documentElement.classList.remove(HIDE_MENU_CLASS), 250);
         return;
       }
-
-      try {
-        await app.resolveCommand(endpoint);
-        waitUntilGone(row, performance.now() + 2500, (gone) => {
-          mark(button, gone ? "Удалено" : "Не удалено", gone ? "ok" : "error");
-          if (gone) setTimeout(refresh, 50);
-          document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-          setTimeout(() => document.documentElement.classList.remove(HIDE_MENU_CLASS), 250);
-        });
-      } catch {
-        mark(button, "Ошибка", "error");
-        setTimeout(() => document.documentElement.classList.remove(HIDE_MENU_CLASS), 250);
-      }
-    };
-
-    const existingEndpoint = removeEndpointFromRow(row);
-    if (existingEndpoint) {
-      await run(existingEndpoint);
-      return;
+      // Let YouTube run its own command with the correct row context.
+      item.click();
+      const gone = await new Promise((done) => waitUntilGone(row, performance.now() + 2500, done));
+      mark(button, gone ? "Удалено" : "Не удалено", gone ? "ok" : "error");
+      if (gone) setTimeout(refresh, 50);
+    } catch {
+      mark(button, "Ошибка", "error");
+    } finally {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      document.documentElement.classList.remove(HIDE_MENU_CLASS);
+      button.disabled = false;
+      removing = false;
     }
-
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    setTimeout(() => {
-      menuButton.click();
-      waitForRemoveEndpoint(row, performance.now() + 1500, run);
-    }, 100);
   }
 
   function addActions(row) {
