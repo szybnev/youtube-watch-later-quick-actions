@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "YouTube Watch Later Quick Actions",
-  "description": "Adds one-click copy link and remove buttons to YouTube Watch Later.",
-  "version": "1.0.7",
+  "description": "Watch Later quick actions (copy link, remove) and one-click transcript download on watch pages.",
+  "version": "1.1.0",
   "minimum_chrome_version": "114",
   "content_scripts": [
     {
@@ -10,7 +10,8 @@
         "https://www.youtube.com/*"
       ],
       "js": [
-        "content.js"
+        "content.js",
+        "transcript.js"
       ],
       "css": [
         "styles.css"
