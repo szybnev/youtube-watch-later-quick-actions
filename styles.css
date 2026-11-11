@@ -59,3 +59,33 @@ html.wlqa-hide-menu tp-yt-iron-dropdown {
     color: var(--yt-spec-icon-active-other, var(--yt-spec-text-primary, #fff));
   }
 }
+
+.wlqa-transcript-button {
+  align-items: center;
+  display: inline-flex !important;
+  justify-content: center;
+}
+
+.wlqa-transcript-button svg {
+  fill: #fff;
+  height: 60%;
+  pointer-events: none;
+  width: 60%;
+}
+
+.wlqa-transcript-button[data-wlqa-state="busy"] svg {
+  animation: wlqa-pulse 0.9s ease-in-out infinite alternate;
+}
+
+.wlqa-transcript-button[data-wlqa-state="ok"] svg {
+  fill: #2ea043;
+}
+
+.wlqa-transcript-button[data-wlqa-state="error"] svg {
+  fill: #f85149;
+}
+
+@keyframes wlqa-pulse {
+  from { opacity: 1; }
+  to { opacity: 0.35; }
+}
